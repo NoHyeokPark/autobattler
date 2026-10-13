@@ -1,0 +1,30 @@
+{
+  "name": "deckbuilding-autobattler",
+  "version": "0.1.0",
+  "private": true,
+  "description": "덱빌딩 오토배틀러 프로토타입 (텍스트 UI)",
+  "type": "module",
+  "scripts": {
+    "play": "node --disable-warning=ExperimentalWarning src/ui/cli.ts",
+    "sim": "node --disable-warning=ExperimentalWarning src/sim/sim.ts",
+    "web": "vite",
+    "web:build": "vite build",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.4"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  }
+}

@@ -1,0 +1,20 @@
+# 카드 일러스트 (art/)
+
+카드 일러스트는 이 폴더에 파일로 둔다. 웹 에디터의 각 카드 "일러스트" 칸에서 올리면 최대 512px webp로 줄여서 여기에 저장된다 (개발 서버 `npm run web` 필요). 직접 넣어도 된다.
+
+| 파일 | 쓰이는 곳 |
+| --- | --- |
+| `monsters/<id>.png` | Lv1 (기본) |
+| `monsters/<id>.lv2.png`, `<id>.lv3.png` | Lv2·Lv3 기본 형태 |
+| `monsters/<id>.lv2.<성장 id>.png` | Lv2에서 **외형 변화** 성장을 고른 형태 (예: `skeleton.lv2.skel_knight.png`) |
+| `monsters/<id>.lv3.<성장 id>.png` | 그 형태로 진화한 Lv3 |
+| `leaders/<id>.png`, `<id>.lv2.png` … `<id>.lv5.png` | 리더 레벨별 |
+| `leaders/<id>.lv<N>.<성장 id>.png` | 리더가 외형 변화 성장을 고른 뒤 (마지막으로 고른 것 기준) |
+| `trinkets/<id>.png` | 장신구 |
+
+- 확장자: webp, png, jpg, jpeg, gif, avif
+- 파일이 없으면 가까운 것으로 대신 보여 준다: 같은 형태의 낮은 레벨 → 기본 형태 → Lv1 → 글자 카드
+- 외형 변화 성장: 에디터의 성장 선택지에서 "외형 변화"를 켠 것 (태그가 바뀌는 성장처럼 성격이 크게 바뀌는 경우)
+- Lv3 합성 때 재료 3장의 외형이 서로 다르면 게임에서 어느 외형으로 진화할지 고른다 (능력은 모두 유지)
+- 유닛 id를 바꾸면 파일 이름도 같이 바꿔야 한다
+- 빌드(`npm run web:build`)하면 `dist/art/`로 복사되고 `manifest.json`이 만들어진다
