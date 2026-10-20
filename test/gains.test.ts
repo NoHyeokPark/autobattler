@@ -5,6 +5,7 @@ import { simulateBattle } from '../src/battle/engine.ts';
 import type { BoardEntry, TeamSnapshot } from '../src/battle/types.ts';
 import { BALANCE } from '../src/config/balance.ts';
 import { describeEffect } from '../src/data/describe.ts';
+import { applyMod, DEFAULT_MOD, snapshotMod } from '../src/data/registry.ts';
 import { TRINKET_MAP } from '../src/data/trinkets.ts';
 import { playBattle } from '../src/game/day.ts';
 import type { RecordStore } from '../src/game/matching.ts';
@@ -22,13 +23,20 @@ function runWith(units: { slot: number; defId: string }[]): RunState {
   const s = createRun('knight', 7, 'gains-test');
   beginDay(s);
   units.forEach((u, i) => (s.board[u.slot - 1] = { uid: 500 + i, defId: u.defId, level: 1 }));
+  normalNode(s);
   return s;
 }
 
 // 다음 전투까지 진행 (보상은 골드로 받는다)
+// 지도 노드의 환경(공격 증가 등)이 수치에 끼지 않게 일반 노드로 고정
+function normalNode(s: RunState) {
+  s.nodes = [{ kind: 'normal', env: 'normal' }];
+  s.nodeIndex = 0;
+}
 function nextDay(s: RunState) {
   while (s.phase === 'reward') chooseReward(s, 'gold');
   if (s.phase === 'growth') s.phase = 'shop';
+  normalNode(s);
 }
 
 test('영구 강화는 이번 전투에 바로 적용되고, 전투가 끝나면 유닛에 쌓인다 (패배해도)', () => {
@@ -89,8 +97,39 @@ test('리더도 영구 강화가 쌓인다 (백전노장)', () => {
   assert.deepEqual(leader.bonus, { atk: 2 });
 });
 
+test('팀 상태 이벤트에 상태 종류와 변화 후 중첩 수가 남는다 (감쇠 포함)', () => {
+  const r = simulateBattle({ player: team([mon(5, 'mushroom')]), enemy: dummy, env: 'normal', day: 1, seed: 1 });
+  const add = r.events.find((e) => e.type === 'status')!;
+  assert.equal(add.status, 'poison');
+  assert.equal(add.target, 'team1');
+  const tick = r.events.find((e) => e.type === 'statusTick')!;
+  assert.equal(tick.status, 'poison');
+  assert.equal(tick.after, tick.amount); // 독은 감쇠 없음
+
+  const mod = snapshotMod('decay');
+  mod.balance.statuses.poison.decay = 'minus1';
+  applyMod(mod);
+  try {
+    const r2 = simulateBattle({ player: team([mon(5, 'mushroom')]), enemy: dummy, env: 'normal', day: 1, seed: 1 });
+    const t2 = r2.events.find((e) => e.type === 'statusTick')!;
+    assert.equal(t2.after, (t2.amount ?? 0) - 1);
+    // 다음 틱의 중첩 = 감쇠 후 값 + 그사이 추가분
+    const ticks = r2.events.filter((e) => e.type === 'statusTick' || (e.type === 'status' && e.target === 'team1'));
+    let stacks = 0;
+    for (const e of ticks) {
+      if (e.type === 'status') stacks = e.after!;
+      else {
+        assert.equal(e.amount, stacks);
+        stacks = e.after!;
+      }
+    }
+  } finally {
+    applyMod(structuredClone(DEFAULT_MOD));
+  }
+});
+
 test('설명 문구', () => {
   assert.equal(describeEffect({ type: 'permanent', target: { side: 'ally', area: 'near', dirs: ['c'] }, stat: 'atk', amount: [1, 2, 3] }), '자신 공격력 영구 +1/2/3');
   assert.equal(describeEffect({ type: 'gold', amount: 2 }), '골드 +2');
-  assert.equal(describeEffect({ type: 'trinket', grade: [1, 1, 2] }), '무작위 일반/일반/희귀 장신구 1개 획득');
+  assert.equal(describeEffect({ type: 'trinket', grade: [1, 1, 2] }), '무작위 일반/일반/고급 장신구 1개 획득');
 });

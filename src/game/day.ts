@@ -32,6 +32,7 @@ export function playBattle(s: RunState, store: RecordStore, playerName?: string)
     player: rec.team,
     enemy: match.team,
     env: node.env,
+    node: node.kind,
     day: s.day,
     seed: hashSeed(s.runId, s.day),
   };

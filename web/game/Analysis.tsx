@@ -1,5 +1,6 @@
 // 전투 후 분석: 유닛별 피해·회복·실드, 시간대별 HP 그래프, 상대 보드와 장신구.
 
+import { otherSources } from '../../src/ui/analysis.ts';
 import type { ReactNode } from 'react';
 import { BALANCE } from '../../src/config/balance.ts';
 import type { BattleResult } from '../../src/battle/types.ts';
@@ -46,7 +47,7 @@ export function HpChart({ r }: { r: BattleResult }) {
 
 export function Analysis({ b }: { b: DayBattle }) {
   const r = b.result;
-  const others = r.sourceTotals.filter((x) => !/^\d-\d$/.test(x.src) && (x.damage || x.heal || x.shield));
+  const others = otherSources(r);
   const enemyCells: ReactNode[] = Array(9).fill(null);
   for (const e of b.match.team.board) enemyCells[e.slot - 1] = <Card data={entryCard(e, b.match.team)} size="sm" />;
   const change = (a: number, z: number) => (a === z ? `${z}` : `${a}→${z}`);
@@ -69,16 +70,16 @@ export function Analysis({ b }: { b: DayBattle }) {
                 <td>{(u.interval / BALANCE.ticksPerSec).toFixed(1)}s</td>
                 <td>{u.extra}</td>
                 <td className="num">{u.acts}</td>
-                <td className="num">{u.damage}</td>
-                <td className="num">{u.heal}</td>
-                <td className="num">{u.shield}</td>
+                <ShareCell total={u.damage} parts={[['상태', u.statusDamage], ['버프', u.buffDamage]]} />
+                <ShareCell total={u.heal} parts={[['재생', u.statusHeal], ['버프', u.buffHeal]]} />
+                <ShareCell total={u.shield} parts={[['버프', u.buffShield]]} />
               </tr>
             ))}
             {others.map((o) => (
-              <tr key={o.src} className={`side${o.side} other`}>
+              <tr key={`${o.side}${o.label}`} className={`side${o.side} other`}>
                 <td>{SIDE[o.side]}</td>
                 <td>-</td>
-                <td colSpan={6}>{o.src.startsWith('status:') ? `${SIDE[o.side]}이 건 ${o.srcName}` : `<장신구> ${o.srcName}`}</td>
+                <td colSpan={6}>{o.label}</td>
                 <td className="num">{o.damage}</td>
                 <td className="num">{o.heal}</td>
                 <td className="num">{o.shield}</td>
@@ -87,6 +88,7 @@ export function Analysis({ b }: { b: DayBattle }) {
           </tbody>
         </table>
       </div>
+      <p className="muted small">유닛의 피해·회복·실드에는 그 유닛이 건 팀 상태(독·화상·괴사·가시·재생)가 낸 몫(상태)과, 다른 아군에게 건 전투 한정 버프(강화 상태, 공격력·주문력 증가)가 낸 몫(버프)이 포함됩니다. 버프 몫은 받은 유닛의 기록에서 빠지고, 영구 강화로 오른 능력치는 받은 유닛의 몫입니다. 장신구는 진영별로 묶었습니다.</p>
       <h3>시간대별 HP</h3>
       <HpChart r={r} />
       <h3>상대 보드 · {b.match.team.name}</h3>
@@ -97,5 +99,17 @@ export function Analysis({ b }: { b: DayBattle }) {
         </div>
       )}
     </div>
+  );
+}
+
+// 합계 + 남에게 건 상태·버프로 낸 몫 (예: 120 (상태 30 · 버프 12))
+function ShareCell({ total, parts }: { total: number; parts: [string, number][] }) {
+  const shown = parts.filter(([, n]) => n > 0);
+  const direct = total - shown.reduce((s, [, n]) => s + n, 0);
+  return (
+    <td className="num" title={shown.length ? [`직접 ${direct}`, ...shown.map(([k, n]) => `${k} ${n}`)].join(' + ') : undefined}>
+      {total}
+      {shown.length > 0 && <span className="dot-share"> ({shown.map(([k, n]) => `${k} ${n}`).join(' · ')})</span>}
+    </td>
   );
 }

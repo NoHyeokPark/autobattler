@@ -86,23 +86,28 @@ test('14일차 전 10승이면 보상 후 연장 선택, 연장 1패면 +4로 �
   assert.equal(s.phase, 'extendChoice');
   chooseExtend(s, true);
   assert.equal(s.extension.active, true);
-  assert.equal(s.nodes.length, 2); // 연장 중 엘리트·보스 없음
+  assert.ok(s.nodes.every((n) => n.kind !== 'elite' && n.kind !== 'boss' && n.kind !== 'final')); // 연장 중 엘리트·보스는 일반 전투로
   applyBattle(s, s.nodes[0], false, { opponent: 'x', matchStage: 'x', seconds: 1 });
   assert.deepEqual(s.end, { reason: 'extensionLost', score: BALANCE.rank.extensionLossScore });
 });
 
-test('노드: 보스 일차에는 보스, 9승이면 2개, 14일차는 최종 보스', () => {
+test('노드: 지도에서 오늘 줄의 노드, 9승이어도 엘리트·보스는 그대로', () => {
   const s = fresh();
+  s.mapPath = [];
   s.day = 2;
-  beginDay(s); // 3일차
-  assert.deepEqual(s.nodes.map((n) => n.kind), ['normal', 'env', 'boss']);
+  beginDay(s); // 3일차: 지난 노드가 없으면 그 줄 전체
+  const row3 = s.map!.nodes.filter((n) => n.day === 3);
+  assert.equal(s.nodes.length, row3.length);
+  assert.ok(s.nodes.some((n) => n.kind === 'boss'));
   s.wins = 9;
+  s.day = 2;
   beginDay(s);
-  assert.deepEqual(s.nodes.map((n) => n.kind), ['normal', 'env']);
+  assert.ok(s.nodes.some((n) => n.kind === 'boss'), '보스는 9승이어도');
+  assert.ok(s.nodes.every((n) => !n.mapKind));
   s.day = 13;
   s.phase = 'shop';
   beginDay(s);
-  assert.deepEqual(s.nodes.map((n) => n.kind), ['normal', 'env', 'final']);
+  assert.ok(s.nodes.some((n) => n.kind === 'final'), '최종 보스는 9승이어도');
 });
 
 test('매칭: 같은 일차·같은 환경 → 일반 환경 → 시드 봇', () => {

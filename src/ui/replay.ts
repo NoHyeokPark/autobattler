@@ -51,7 +51,7 @@ export function tickLines(evs: BEvent[], verboseBuffs: boolean): string[] {
       case 'damage': agg(e).damage += e.amount ?? 0; break;
       case 'heal': agg(e).heal += e.amount ?? 0; break;
       case 'shield': agg(e).shield += e.amount ?? 0; break;
-      case 'status': agg(e).notes.push(`${e.note} +${e.amount}(${e.target === `team${e.side}` ? '아군' : '상대'} ${e.after})`); break;
+      case 'status': agg(e).notes.push(`${e.note} ${(e.amount ?? 0) > 0 ? '+' : ''}${e.amount}(${e.target === `team${e.side}` ? '아군' : '상대'} ${e.after})`); break;
       case 'statusTick': break;
       case 'stun': agg(e).notes.push(`${e.note} ${sec(e.amount ?? 0)} 기절`); break;
       case 'gain': agg(e).notes.push(`획득 ${e.note}`); break;
@@ -60,6 +60,9 @@ export function tickLines(evs: BEvent[], verboseBuffs: boolean): string[] {
         else buffCount++;
         break;
       case 'sudden': lines.push(`!! 서든데스: ${e.note}`); break;
+      case 'hpCost': lines.push(`${SIDE[sideOf(e)]} ${e.srcName}: 아군 체력 ${e.amount} 소모 (남은 ${e.after})`); break;
+      case 'react': lines.push(`${SIDE[sideOf(e)]} ${e.srcName}: ${e.note}`); break;
+      case 'say': lines.push(`${SIDE[sideOf(e)]} ${e.srcName}: “${e.note}”`); break;
       default: break;
     }
   }

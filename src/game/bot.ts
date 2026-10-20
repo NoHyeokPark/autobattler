@@ -8,15 +8,17 @@
 import { BALANCE } from '../config/balance.ts';
 import { Rng } from '../core/rng.ts';
 import { findUnitGrowth } from '../data/growth.ts';
-import { findGrowth, LEADER_MAP, LEADERS } from '../data/leaders.ts';
+import { findGrowth, isPromotion, LEADER_MAP, LEADERS } from '../data/leaders.ts';
 import { MONSTER_MAP } from '../data/monsters.ts';
 import { TRINKET_MAP } from '../data/trinkets.ts';
 import type { Effect, GrowthDef, Trigger, UnitDef } from '../data/types.ts';
 import type { TeamSnapshot } from '../battle/types.ts';
 import { beginDay, buildRewards, chooseGrowth } from './run.ts';
-import { buy, chooseForm, chooseUnitGrowth, itemCost, reroll, sell, sellPrice } from './shop.ts';
-import type { OwnedUnit, RunState } from './state.ts';
-import { createRun, deployLimit, toSnapshot } from './state.ts';
+import { buy, chooseForm, choosePromotion, chooseUnitGrowth, itemCost, reroll, sell, sellPrice } from './shop.ts';
+import { choiceBlock } from './events.ts';
+import type { OwnedUnit, RewardStage, RunState } from './state.ts';
+import { baseDeployLimit, createRun, livesLeft, toSnapshot, unitDeploy } from './state.ts';
+import { boardTagCounts, pathTags } from './view.ts';
 
 export type Strategy = 'expand' | 'trinket' | 'interest' | 'growth' | 'economy';
 export const STRATEGIES: Strategy[] = ['expand', 'trinket', 'interest', 'growth', 'economy'];
@@ -63,7 +65,7 @@ function favoredCount(s: RunState, strategy: Strategy): number {
 function unitValue(u: OwnedUnit, strategy?: Strategy): number {
   if (u.leader) return Number.MAX_SAFE_INTEGER;
   const b = u.bonus ?? {};
-  const stacked = (b.atk ?? 0) * 4 + Math.floor((b.hp ?? 0) / 3) + (b.power ?? 0) * 2 + -(b.intervalPct ?? 0) + (b.extra ?? 0) * 20;
+  const stacked = (b.atk ?? 0) * 4 + Math.floor((b.hp ?? 0) / 3) + (b.power ?? 0) * 2 + (b.haste ?? 0) + (b.extra ?? 0) * 20;
   const fav = strategy && favored(u.defId, strategy) ? 25 : 0;
   return MONSTER_MAP[u.defId].grade * 10 * BALANCE.unit.mergeCount ** (u.level - 1) + stacked + fav;
 }
@@ -72,7 +74,7 @@ function unitValue(u: OwnedUnit, strategy?: Strategy): number {
 // 시뮬레이션: 이 규칙이 없을 때 이자형은 4패 상태에서도 평균 73골드를 들고 14%만 쓰고 탈락했다.
 export const ALL_IN_LIVES = 2;
 function allIn(s: RunState): boolean {
-  return BALANCE.run.lossLimit - s.losses <= ALL_IN_LIVES;
+  return livesLeft(s) <= ALL_IN_LIVES;
 }
 
 function reserveGold(s: RunState, strategy: Strategy): number {
@@ -81,6 +83,7 @@ function reserveGold(s: RunState, strategy: Strategy): number {
 }
 
 export function botShop(s: RunState, strategy: Strategy, rng: Rng) {
+  botUnitGrowth(s, rng, strategy); // 하루 시작에 진화의 돌 등으로 생긴 선택부터 처리
   const reserve = reserveGold(s, strategy);
   // 올인일 때는 합성을 찾아 리롤을 계속한다 (골드가 바닥날 때까지)
   const maxRerolls = allIn(s) ? 99 : strategy === 'economy' ? 6 : 3;
@@ -164,6 +167,8 @@ export function botUnitGrowth(s: RunState, rng: Rng, strategy?: Strategy) {
   }
   // Lv3 진화 외형은 능력과 무관하므로 무작위
   while (s.phase === 'unitGrowth' && (s.formChoices?.length ?? 0) > 0) chooseForm(s, rng.int(s.formChoices![0].options.length));
+  // 몬스터 전직: 무작위
+  while (s.phase === 'unitGrowth' && (s.unitPromotions?.length ?? 0) > 0) choosePromotion(s, rng.int(s.unitPromotions![0].choices.length));
 }
 
 // 칸 효과를 대략 고려한 배치 선호 점수 (봇 휴리스틱)
@@ -185,8 +190,17 @@ const SLOT_TIEBREAK = [5, 2, 4, 6, 8, 1, 3, 7, 9];
 
 export function arrangeBoard(s: RunState, strategy?: Strategy) {
   const units = ownedUnits(s).sort((a, b) => unitValue(b, strategy) - unitValue(a, strategy));
-  const deploy = units.slice(0, deployLimit(s));
-  const rest = units.slice(deployLimit(s));
+  // 가치 순으로 올리되, 통솔력 유닛(지휘자 등)은 올리면 그만큼 제한이 늘어난다
+  const deploy: OwnedUnit[] = [];
+  const rest: OwnedUnit[] = [];
+  let limit = baseDeployLimit(s);
+  for (const u of units) {
+    const room = Math.min(BALANCE.board.maxDeploy, limit + unitDeploy(u));
+    if (deploy.length < room) {
+      deploy.push(u);
+      limit += unitDeploy(u);
+    } else rest.push(u);
+  }
   s.board = Array(9).fill(null);
   for (const u of deploy) {
     const def = unitDef(u);
@@ -206,9 +220,18 @@ export function arrangeBoard(s: RunState, strategy?: Strategy) {
   rest.slice(0, BALANCE.board.benchSize).forEach((u, i) => (s.bench[i] = u));
 }
 
-// 리더 성장: 성장형은 영구 강화 성장(예: 백전노장)을 우선, 나머지는 무작위
+// 리더 성장: 변신 레벨에서는 보드에 가장 많이 모인 태그 쪽으로 (본질 강화 = 원래 태그). 성장형은 영구 강화 성장(예: 백전노장)을 우선, 나머지는 무작위
 export function botGrowth(s: RunState, rng: Rng, strategy?: Strategy) {
   if (s.phase !== 'growth') return;
+  const forms = s.growthChoices.map((id) => findGrowth(s.leaderId, id));
+  if (forms.length > 0 && s.growthChoices.every((id) => isPromotion(s.leaderId, id))) {
+    const counts = boardTagCounts(s.board);
+    const score = forms.map((g) => pathTags(s.leaderId, g).reduce((n, t) => n + (counts.get(t) ?? 0), 0));
+    const best = Math.max(...score);
+    const top = score.map((v, i) => (v === best ? i : -1)).filter((i) => i >= 0);
+    chooseGrowth(s, top[rng.int(top.length)]);
+    return;
+  }
   const fav = strategy === 'growth' ? s.growthChoices.findIndex((id) => growthUses(findGrowth(s.leaderId, id), GROWTH_EFFECTS)) : -1;
   chooseGrowth(s, fav >= 0 ? fav : rng.int(s.growthChoices.length));
 }
@@ -230,8 +253,22 @@ export function botRewardChoice(options: string[], strategy: Strategy): number |
   return g >= minGrade ? best : 'gold';
 }
 
+// 이벤트·모닥불 선택: 이벤트는 고를 수 있는 첫 선택지, 모닥불은 라이프가 2 이하면 휴식, 아니면 체력 단련
+export function botStageChoice(s: RunState, st: RewardStage): number {
+  if (st.kind === 'campfire') return st.options.indexOf(livesLeft(s) <= 2 ? 'rest' : 'hp');
+  return Math.max(0, (st.event?.choices ?? []).findIndex((c) => !choiceBlock(s, c)));
+}
+
+// 이벤트 떠돌이 몬스터 선택: 이미 가진 몬스터(합성 재료)를 먼저, 없으면 첫 번째
+export function botMonsterChoice(s: RunState, options: string[]): number | 'gold' {
+  if (options.length === 0) return 'gold';
+  const have = new Set([...s.board, ...s.bench].filter((u): u is OwnedUnit => !!u).map((u) => u.defId));
+  return Math.max(0, options.findIndex((id) => have.has(id)));
+}
+
 export function botNode(s: RunState, rng: Rng): number {
-  const weights = s.nodes.map((n) => (n.kind === 'normal' ? 40 : n.kind === 'env' ? 35 : n.kind === 'final' ? 50 : 25));
+  // 모닥불은 패배가 쌓였을수록, 이벤트는 고르게
+  const weights = s.nodes.map((n) => (n.kind === 'normal' ? 40 : n.kind === 'env' ? 35 : n.kind === 'final' ? 50 : n.kind === 'campfire' ? (s.losses >= 2 ? 60 : 20) : n.kind === 'event' ? 30 : 25));
   return rng.weighted(weights);
 }
 
@@ -246,7 +283,7 @@ export function buildBotTeam(day: number, seed: number, opts: { strategy?: Strat
     botGrowth(s, rng, strategy);
     botShop(s, strategy, rng);
     if (d < day) {
-      const stage = buildRewards(s, s.nodes[0], rng.chancePct(50), rng)[0];
+      const stage = buildRewards(s, { kind: 'normal', env: 'normal' }, rng.chancePct(50), rng)[0]; // 시드 봇은 전투 없이 일반 보상만
       const pick = botRewardChoice(stage.options, strategy);
       if (pick === 'gold') s.gold += stage.gold;
       else s.trinkets.push(stage.options[pick]);

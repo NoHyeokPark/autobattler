@@ -10,16 +10,17 @@ import { playBattle } from '../game/day.ts';
 import { recordRunEnd } from '../game/profile.ts';
 import type { Profile } from '../game/profile.ts';
 import type { RecordStore } from '../game/matching.ts';
-import { beginDay, chooseExtend, chooseGrowth, chooseReward, selectNode, stopExtension } from '../game/run.ts';
-import { buy, chooseForm, chooseUnitGrowth, getAt, move, reroll, sell } from '../game/shop.ts';
+import { beginDay, chooseExtend, chooseGrowth, chooseReward, rerollGrowth, selectNode, stopExtension } from '../game/run.ts';
+import { buy, chooseForm, choosePromotion, chooseUnitGrowth, getAt, move, reroll, rerollUnitGrowth, sell } from '../game/shop.ts';
 import type { Loc, OpResult } from '../game/shop.ts';
 import { createRun } from '../game/state.ts';
+import { mapText } from '../game/map.ts';
 import { leaderView, statLine } from '../game/view.ts';
 import type { RunState } from '../game/state.ts';
-import { loadModFile, loadProfile, loadRecords, loadRun, SAVE_DIR, saveProfile, saveRecords, saveRun } from '../game/storage.ts';
+import { loadModFile, loadProfile, loadRecords, loadRun, resolveModPath, SAVE_DIR, saveProfile, saveRecords, saveRun } from '../game/storage.ts';
 import { renderAnalysis } from './analysis.ts';
 import {
-  HELP, renderEnd, renderFormChoice, renderGrowth, renderProfile, renderReward, renderShopPhase, renderSlotHelp, renderTrinkets, renderUnitGrowth, renderUnitInfo,
+  HELP, renderEnd, renderFormChoice, renderPromotionChoice, renderGrowth, renderProfile, renderReward, renderShopPhase, renderSlotHelp, renderTrinkets, renderUnitGrowth, renderUnitInfo,
 } from './render.ts';
 import { replay } from './replay.ts';
 import type { Speed } from './replay.ts';
@@ -64,7 +65,7 @@ function parseArgs(argv: string[]) {
   };
   const speed = get('speed');
   return {
-    mod: get('mod'),
+    mod: resolveModPath(get('mod'), argv.includes('--no-mod')),
     fresh: argv.includes('--new'),
     seed: get('seed') !== undefined ? Number(get('seed')) : undefined,
     speed: (speed === '1' || speed === '3' || speed === 'skip' ? speed : '3') as Speed,
@@ -143,6 +144,7 @@ async function shopCommand(io: Input, s: RunState, store: RecordStore, profile: 
     }
     case 't': print(renderTrinkets(s.trinkets)); return;
     case 'slots': print(renderSlotHelp(s.day)); return;
+    case 'map': print(mapText(s)); return;
     case 'speed':
       if (a === '1' || a === '3' || a === 'skip') {
         opts.speed = a;
@@ -177,12 +179,17 @@ async function playRun(io: Input, s: RunState, store: RecordStore, profile: Prof
         print(renderGrowth(s));
         const a = await io.ask('성장 번호> ');
         if (a === 'quit') return 'quit';
-        report(chooseGrowth(s, Number(a) - 1));
+        report(a === 'r' ? rerollGrowth(s) : chooseGrowth(s, Number(a) - 1));
         saveRun(s);
         break;
       }
       case 'unitGrowth': {
-        if (s.unitGrowth.length === 0 && s.formChoices?.length) {
+        if (s.unitGrowth.length === 0 && !s.formChoices?.length && s.unitPromotions?.length) {
+          print(renderPromotionChoice(s));
+          const a = await io.ask('전직 번호> ');
+          if (a === 'quit') return 'quit';
+          report(choosePromotion(s, Number(a) - 1));
+        } else if (s.unitGrowth.length === 0 && s.formChoices?.length) {
           print(renderFormChoice(s));
           const a = await io.ask('진화 모습 번호> ');
           if (a === 'quit') return 'quit';
@@ -191,7 +198,7 @@ async function playRun(io: Input, s: RunState, store: RecordStore, profile: Prof
           print(renderUnitGrowth(s));
           const a = await io.ask('성장 번호> ');
           if (a === 'quit') return 'quit';
-          report(chooseUnitGrowth(s, Number(a) - 1));
+          report(a === 'r' ? rerollUnitGrowth(s) : chooseUnitGrowth(s, Number(a) - 1));
         }
         saveRun(s);
         lastShown = '';
@@ -240,7 +247,7 @@ async function main() {
   const opts = { speed: args.speed };
   print('=== 덱빌딩 오토배틀러 프로토타입 v0.1 ===');
   print(`(저장 위치: ${SAVE_DIR})`);
-  if (args.mod) print(`모드 적용: ${loadModFile(args.mod)}`);
+  if (args.mod) print(`모드 적용: ${loadModFile(args.mod)} (${args.mod}) - 기본 데이터로 하려면 --no-mod`);
   const profile = loadProfile();
   const store = loadRecords();
   print(`PvP 기록 풀: ${store.records.length}개 | 몬스터 ${Object.keys(MONSTER_MAP).length}종 | 장신구 ${Object.keys(TRINKET_MAP).length}종`);

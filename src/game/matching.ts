@@ -7,6 +7,7 @@
 import { BALANCE } from '../config/balance.ts';
 import { hashSeed } from '../core/rng.ts';
 import type { Rng } from '../core/rng.ts';
+import { activeModName } from '../data/activeMod.ts';
 import type { EnvId } from '../data/types.ts';
 import type { TeamSnapshot } from '../battle/types.ts';
 import { buildBotTeam } from './bot.ts';
@@ -17,6 +18,7 @@ export interface RecordSnapshot {
   id: string;
   runId: string;
   ruleVersion: number;
+  mod?: string; // 이 기록을 만든 모드 이름. 다른 모드의 기록과는 매칭하지 않는다 (없으면 예전 기록 = 모든 모드와 매칭)
   day: number;
   env: EnvId;
   nodeKind: NodeOption['kind'];
@@ -46,6 +48,7 @@ export function makeRecord(s: RunState, node: NodeOption, name: string): RecordS
     id: `${s.runId}-d${s.day}`,
     runId: s.runId,
     ruleVersion: BALANCE.ruleVersion,
+    mod: activeModName(),
     day: s.day,
     env: node.env,
     nodeKind: node.kind,
@@ -81,8 +84,15 @@ export function seedBot(day: number, env: EnvId, salt: number, strong: boolean):
   return team;
 }
 
+// 지금 적용 중인 모드에서 쓸 수 있는 기록 수 (다른 모드에서 만든 기록 제외, 모드 표시가 없는 예전 기록은 포함)
+export function modRecordCount(store: RecordStore): number {
+  const mod = activeModName();
+  return store.records.filter((r) => (r.mod ?? mod) === mod).length;
+}
+
 export function findOpponent(store: RecordStore, s: RunState, node: NodeOption, rng: Rng): MatchResult {
-  const base = store.records.filter((r) => r.runId !== s.runId && r.ruleVersion === BALANCE.ruleVersion);
+  const mod = activeModName();
+  const base = store.records.filter((r) => r.runId !== s.runId && r.ruleVersion === BALANCE.ruleVersion && (r.mod ?? mod) === mod);
   const query = (pool: 'main' | 'ext', day: number, env: EnvId | null) =>
     base.filter((r) => r.pool === pool && r.day === day && (env === null || r.env === env));
   const pick = (cands: RecordSnapshot[], stage: string): MatchResult | null => {

@@ -6,7 +6,7 @@ import type { BattleInput, BoardEntry, TeamSnapshot } from '../src/battle/types.
 import { BALANCE } from '../src/config/balance.ts';
 import { Rng } from '../src/core/rng.ts';
 import { filterText } from '../src/data/describe.ts';
-import { computeUnit, findUnitGrowth, maxGrowthCount, mergeBonus } from '../src/data/growth.ts';
+import { computeUnit, findUnitGrowth, growthFitsUnit, maxGrowthCount, mergeBonus, rollUnitGrowth, unitGrowthPool } from '../src/data/growth.ts';
 import { MONSTER_MAP } from '../src/data/monsters.ts';
 import { applyMod, DEFAULT_MOD, parseMod, snapshotMod } from '../src/data/registry.ts';
 import { T } from '../src/data/targets.ts';
@@ -68,6 +68,30 @@ test('3장 합성으로 레벨업하면 성장 선택 단계가 되고, 고른 �
   assert.deepEqual(toSnapshot(s, 'x').board.find((e) => e.defId === 'slime')?.growth, [pick]);
 });
 
+test('공용 성장: 없는 능력치(공격력 0·주문력 0)만 올리는 성장은 후보에서 빠진다', () => {
+  const ids = (defId: string, taken: string[] = []) => unitGrowthPool(defId, taken).map((g) => g.id);
+  // 수호 정령: 공격력 0, 주문력 0 → 근력 강화·마력 증폭 없음
+  assert.ok(!ids('guardian').includes('u_might'));
+  assert.ok(!ids('guardian').includes('u_arcane'));
+  assert.ok(ids('guardian').includes('u_tough'));
+  // 슬라임: 주문력 0 → 마력 증폭만 없음
+  assert.ok(ids('slime').includes('u_might'));
+  assert.ok(!ids('slime').includes('u_arcane'));
+  // 독버섯: 공격력 1, 주문력 10 → 둘 다 있음
+  assert.ok(ids('mushroom').includes('u_might'));
+  assert.ok(ids('mushroom').includes('u_arcane'));
+  // 음유시인: 공격력 0, 주문력 10 → 근력 강화 없음
+  assert.ok(!ids('bard').includes('u_might'));
+  assert.ok(ids('bard').includes('u_arcane'));
+  // 실제 추첨에서도 나오지 않는다
+  for (let seed = 0; seed < 200; seed++) {
+    const roll = rollUnitGrowth('guardian', [], new Rng(seed));
+    assert.ok(!roll.includes('u_might') && !roll.includes('u_arcane'));
+  }
+  // 새 능력·태그 변화가 있는 성장은 능력치와 상관없이 남는다
+  assert.ok(growthFitsUnit({ id: 'x', name: 'x', desc: '', repeatable: false, stats: { atkPct: 10 }, addTags: ['전사'] }, MONSTER_MAP.guardian));
+});
+
 test('Lv3 합성은 새 선택 없이 Lv2 3장의 성장을 모두 가진다 (반복 불가 중복은 하나만)', () => {
   const s = fresh();
   const lv2 = (uid: number, growth: string[]) => ({ uid, defId: 'slime', level: 2, growth });
@@ -104,31 +128,33 @@ test('Lv2가 되자마자 Lv3으로 연쇄 합성되면 Lv2 선택은 Lv3 유닛
 });
 
 test('영구 강화는 합성 때 합산하지 않고 계열별 최고값만 남는다', () => {
-  // 행동 간격은 낮을수록 좋음 → 최솟값, 나머지는 최댓값. 없는 값은 0으로 봐서 불리한 강화는 사라진다.
+  // 계열별 최댓값 (가속 포함). 없는 값은 0으로 봐서 불리한 강화는 사라진다.
   assert.deepEqual(
-    mergeBonus([{ intervalPct: -10, atk: 3 }, { intervalPct: -15, hp: -5 }, { intervalPct: -5, atk: 5, powerPct: 20 }]),
-    { intervalPct: -15, atk: 5, powerPct: 20 },
+    mergeBonus([{ haste: 10, atk: 3 }, { haste: 18, hp: -5 }, { haste: 5, atk: 5, powerPct: 20 }]),
+    { haste: 18, atk: 5, powerPct: 20 },
   );
+  // 예전 형식(행동 간격 %)은 낮을수록 좋음
+  assert.deepEqual(mergeBonus([{ intervalPct: -10 }, { intervalPct: -15 }]), { intervalPct: -15 });
   assert.equal(mergeBonus([undefined, {}, undefined]), undefined);
 
   const s = fresh();
-  s.board[0] = { uid: 301, defId: 'slime', level: 1, bonus: { intervalPct: -10, atk: 3 } };
-  s.bench[0] = { uid: 302, defId: 'slime', level: 1, bonus: { intervalPct: -15 } };
-  s.bench[1] = { uid: 303, defId: 'slime', level: 1, bonus: { intervalPct: -5, atk: 5 } };
+  s.board[0] = { uid: 301, defId: 'slime', level: 1, bonus: { haste: 10, atk: 3 } };
+  s.bench[0] = { uid: 302, defId: 'slime', level: 1, bonus: { haste: 18 } };
+  s.bench[1] = { uid: 303, defId: 'slime', level: 1, bonus: { haste: 5, atk: 5 } };
   mergeAll(s);
   assert.equal(s.board[0]!.level, 2);
-  assert.deepEqual(s.board[0]!.bonus, { intervalPct: -15, atk: 5 }); // -30%가 아니라 -15%
+  assert.deepEqual(s.board[0]!.bonus, { haste: 18, atk: 5 }); // +33이 아니라 +18
 });
 
 test('영구 강화는 전투 능력치에 반영되고 기록 스냅샷에도 들어간다', () => {
   const s = fresh();
-  s.board[0] = { uid: 401, defId: 'slime', level: 1, bonus: { atk: 10, intervalPct: -50 } };
+  s.board[0] = { uid: 401, defId: 'slime', level: 1, bonus: { atk: 10, haste: 100 } };
   const entry = toSnapshot(s, 'x').board.find((e) => e.defId === 'slime')!;
-  assert.deepEqual(entry.bonus, { atk: 10, intervalPct: -50 });
+  assert.deepEqual(entry.bonus, { atk: 10, haste: 100 });
   const r = simulateBattle(input(team([{ ...entry, slot: 2 }]), team([mon(5, 'guardian')])));
   const u = r.units.find((x) => x.uid === '0-2')!;
   assert.equal(u.startAtk, 5 + 10 + 1); // 기본 5 + 강화 10 + 1행 보너스 1
-  assert.equal(u.interval, 10); // 20 tick × 0.5
+  assert.equal(u.interval, 10); // 20 tick × 100 / (100 + 100)
 });
 
 test('성장: 기본 능력 제거·새 능력 추가·태그 추가/제거·% 능력치', () => {
@@ -237,4 +263,20 @@ test('독 중첩은 주문력 기반이라 레벨업과 주문력 성장으로 �
   assert.equal(firstPoison(2), 2); // 19 × 10% = 1.9 → 반올림 2
   assert.equal(firstPoison(3), 4); // 36 × 10% = 3.6 → 4
   assert.equal(firstPoison(3, ['u_arcane']), 5); // 36 × 1.4 = 50 → 5
+});
+
+test('등장 레벨 구간: 몬스터 성장도 고르는 레벨이 구간 밖이면 나오지 않는다', () => {
+  const mod = snapshotMod('lv-range');
+  for (const g of mod.unitGrowth) g.minLevel = 3;
+  applyMod(mod);
+  try {
+    for (let seed = 1; seed <= 30; seed++) {
+      const lv2 = rollUnitGrowth('slime', [], new Rng(seed), 2);
+      assert.ok(lv2.every((id) => MONSTER_MAP.slime.growth?.some((g) => g.id === id)), `seed ${seed}: Lv2엔 전용 성장만`);
+      const lv3 = rollUnitGrowth('slime', [], new Rng(seed), 3);
+      assert.equal(lv3.length, BALANCE.unit.growthChoices);
+    }
+  } finally {
+    applyMod(structuredClone(DEFAULT_MOD));
+  }
 });

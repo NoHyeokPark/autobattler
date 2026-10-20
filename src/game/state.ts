@@ -1,7 +1,8 @@
 import { BALANCE } from '../config/balance.ts';
 import { findGrowth, LEADER_MAP } from '../data/leaders.ts';
+import { MONSTER_MAP } from '../data/monsters.ts';
 import { TRINKET_MAP } from '../data/trinkets.ts';
-import type { EnvId, StatMods } from '../data/types.ts';
+import type { EnvId, EventDef, StatMods } from '../data/types.ts';
 import type { TeamSnapshot } from '../battle/types.ts';
 
 export interface OwnedUnit {
@@ -27,20 +28,42 @@ export interface PendingUnitGrowth {
   uid: number;
   level: number;
   choices: string[];
+  rerolls?: number; // 남은 다시 뽑기 횟수
 }
 
 export type ShopItem = { kind: 'monster' | 'trinket'; defId: string } | null;
 
-export type NodeKind = 'normal' | 'env' | 'elite' | 'boss' | 'final';
+// env = 예전 "환경 노드" (지도 이전의 기록에만 남아 있다). campfire = 모닥불(라이프 +1), event = 이벤트(?)
+export type NodeKind = 'normal' | 'env' | 'elite' | 'boss' | 'final' | 'campfire' | 'event';
 export interface NodeOption {
   kind: NodeKind;
   env: EnvId;
+  mapId?: number; // 지도 노드 id
+  mapKind?: NodeKind; // 지도에 그려진 원래 종류 (연장 중에는 엘리트·보스가 일반 전투로 진행된다)
+}
+
+// 런 지도: 일차마다 한 줄, 노드는 다음 날 노드들과 이어져 있다
+export interface MapNode {
+  id: number;
+  day: number;
+  lane: number;
+  kind: NodeKind;
+  env: EnvId;
+  next: number[]; // 이어진 다음 날 노드 id
+}
+export interface RunMap {
+  lanes: number;
+  nodes: MapNode[];
 }
 
 export interface RewardStage {
   label: string;
-  options: string[]; // 장신구 id
-  gold: number; // 받지 않고 골드로 바꿀 때
+  // 없으면 장신구. monster = 이벤트에서 고르는 몬스터 (고르면 다음 날 벤치로).
+  // event = 이벤트 상황과 선택지 (event에 이벤트 데이터, 골드로 받기 없음). campfire = 휴식·단련 (options: 'rest' 또는 능력치, 골드로 받기 없음)
+  kind?: 'trinket' | 'monster' | 'event' | 'campfire';
+  options: string[]; // 장신구 id (monster면 몬스터 id, campfire면 'rest'·능력치, event면 비움)
+  gold: number; // 받지 않고 골드로 바꿀 때 (event·campfire는 없음)
+  event?: EventDef;
 }
 
 export interface DayLog {
@@ -57,13 +80,39 @@ export interface DayLog {
 export type Phase = 'growth' | 'shop' | 'unitGrowth' | 'reward' | 'extendChoice' | 'ended';
 
 export interface RunEnd {
-  reason: 'champion' | 'eliminated' | 'extensionStop' | 'extensionLost' | 'extensionDone';
+  reason: 'champion' | 'eliminated' | 'extensionStop' | 'extensionLost' | 'extensionDone' | 'outOfDays'; // outOfDays = 라이프가 남은 채 마지막 날이 끝남
   score: number;
+}
+
+// 화면에 보여 줄 몬스터 대사 (처음 구매·최고 레벨). 화면이 읽고 비운다
+export interface VoiceEvent {
+  defId: string;
+  kind: 'buy' | 'maxLevel' | 'promote' | 'origin'; // origin = 기원 등급 획득 (defId = 몬스터 또는 장신구 id)
+  trinket?: boolean; // origin: 장신구
+  // promote: 전직한 유닛의 모습 (작은 알림에 카드로 보여 줌)
+  promoId?: string;
+  from?: string; // 전직 전 이름
+  growth?: string[];
+  form?: string;
+}
+
+// 기원 등급을 얻은 순간 알림 (몬스터 대사 자리의 작은 알림, 최근 몇 개만)
+export function noteOrigin(s: RunState, defId: string, trinket = false) {
+  s.voices = [...(s.voices ?? []), { defId, kind: 'origin' as const, ...(trinket ? { trinket: true } : {}) }].slice(-4);
+}
+
+// 몬스터 전직 선택 (길이 여럿일 때)
+export interface PendingPromotion {
+  uid: number;
+  choices: string[];
 }
 
 export interface RunState {
   saveVersion: 1;
   ruleVersion: number;
+  seenMonsters?: string[]; // 이번 런에서 한 번이라도 산 몬스터 (처음 구매 대사용)
+  voices?: VoiceEvent[];
+  notices?: string[]; // 하루 시작에 일어난 일 (일회성 장신구 발동 등). 화면이 알림으로 보여 주고 비운다
   runId: string;
   rng: number;
   leaderId: string;
@@ -78,19 +127,31 @@ export interface RunState {
   shop: ShopItem[];
   shopLocked: boolean;
   trinkets: string[];
-  nodes: NodeOption[];
+  nodes: NodeOption[]; // 오늘 고를 수 있는 노드 (지도에서 어제 노드와 이어진 것)
   nodeIndex: number | null;
+  map?: RunMap; // 첫날 만든다 (지도 이전 저장은 다음 날 시작할 때 만든다)
+  mapPath?: number[]; // 지나온 지도 노드 id (일차 순)
+  extraLives?: number; // 모닥불로 얻은 라이프 (패배 한도 + 이것)
+  pendingGift?: string; // 예전 저장: 이벤트에서 받은 몬스터 하나 (pendingGifts로 처리)
+  pendingGifts?: string[]; // 이벤트에서 받은 몬스터: 다음 날 상점이 열릴 때 벤치에 (가득 차면 골드)
   phase: Phase;
   growthChoices: string[];
+  growthRerolls?: number; // 리더 성장 선택지의 남은 다시 뽑기 횟수
   unitGrowth: PendingUnitGrowth[];
   formChoices?: PendingFormChoice[];
+  unitPromotions?: PendingPromotion[];
   rewards: RewardStage[];
   extension: { active: boolean; wins: number; declined: boolean };
   log: DayLog[];
   end: RunEnd | null;
   profileRecorded?: boolean;
   nextUid: number;
-  lastIncome: { base: number; interest: number; bonus: number };
+  lastIncome: { base: number; interest: number; bonus: number; saved?: number }; // saved = 이자 기준 (수입 전 남긴 골드)
+}
+
+// 남은 라이프 (몇 번 더 질 수 있나). 0이면 탈락
+export function livesLeft(s: RunState): number {
+  return BALANCE.run.lossLimit + (s.extraLives ?? 0) - s.losses;
 }
 
 export function createRun(leaderId: string, seed: number, runId: string): RunState {
@@ -129,9 +190,15 @@ export function createRun(leaderId: string, seed: number, runId: string): RunSta
   };
 }
 
-export function deployLimit(s: RunState): number {
+// 배치 인원 = 기본 + 리더 성장(통솔력) + 보드에 있는 몬스터의 통솔력(지휘자 등). 9칸이 상한
+export function baseDeployLimit(s: RunState): number {
   const extra = s.growth.reduce((n, g) => n + (findGrowth(s.leaderId, g)?.deploy ?? 0), 0);
   return Math.min(BALANCE.board.maxDeploy, BALANCE.board.initialDeployLimit + extra);
+}
+export const unitDeploy = (u: { leader?: boolean; defId: string } | null | undefined) => (u && !u.leader ? MONSTER_MAP[u.defId]?.deploy ?? 0 : 0);
+export function deployLimit(s: RunState): number {
+  const fromBoard = s.board.reduce((n, u) => n + unitDeploy(u), 0);
+  return Math.min(BALANCE.board.maxDeploy, baseDeployLimit(s) + fromBoard);
 }
 
 export function deployedCount(s: RunState): number {
@@ -164,5 +231,5 @@ export function toSnapshot(s: RunState, name: string): TeamSnapshot {
       });
     }
   }
-  return { name, leaderId: s.leaderId, leaderLevel: s.leaderLevel, growth: [...s.growth], board, trinkets: [...s.trinkets] };
+  return { name, leaderId: s.leaderId, leaderLevel: s.leaderLevel, growth: [...s.growth], board, trinkets: [...s.trinkets], gold: s.gold };
 }

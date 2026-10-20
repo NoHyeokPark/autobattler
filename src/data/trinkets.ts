@@ -1,4 +1,5 @@
 import { T } from './targets.ts';
+import { GRADE_NAMES } from './types.ts';
 import type { TrinketDef } from './types.ts';
 
 // 장신구: 보유만으로 효과. 판매 불가. 전투 효과는 모두 시스템 효과로 처리한다.
@@ -41,8 +42,23 @@ export const TRINKETS: TrinketDef[] = [
   },
   // ── 에픽 ──
   {
-    id: 'hourglass', name: '모래시계', grade: 3, desc: '전투 시작: 아군 전체 행동 간격 -10%',
-    triggers: [{ on: 'battleStart', effects: [{ type: 'intervalPct', target: T.allies(), pct: -10 }] }],
+    id: 'hourglass', name: '모래시계', grade: 3, desc: '전투 시작: 아군 전체 가속 +11',
+    triggers: [{ on: 'battleStart', effects: [{ type: 'haste', target: T.allies(), amount: 11 }] }],
+  },
+  // 대응용 장신구: 중첩 빌드(독·화상 / 재생·강화·가시)를 견제. 어느 덱이든 슬롯 하나를 내서 챙길 수 있게 희귀 등급
+  {
+    id: 'purifying_salt', name: '정화의 소금', grade: 2, desc: '',
+    triggers: [
+      { on: 'timer', atSec: 8, effects: [{ type: 'cleanse', pct: 30 }] },
+      { on: 'timer', atSec: 16, effects: [{ type: 'cleanse', pct: 30 }] },
+    ],
+  },
+  {
+    id: 'unraveling_needle', name: '해주의 바늘', grade: 2, desc: '',
+    triggers: [
+      { on: 'timer', atSec: 8, effects: [{ type: 'dispel', pct: 30 }] },
+      { on: 'timer', atSec: 16, effects: [{ type: 'dispel', pct: 30 }] },
+    ],
   },
   {
     id: 'ward_charm', name: '수호의 부적', grade: 3, desc: '10초: 실드 250',
@@ -82,6 +98,42 @@ export const TRINKETS: TrinketDef[] = [
     id: 'frost_heart', name: '서리 심장', grade: 5, desc: '5초: 상대 전체 4초 기절',
     triggers: [{ on: 'timer', atSec: 5, effects: [{ type: 'stun', target: T.enemies(), ticks: 40 }] }],
   },
+  // ── 성장 촉진 (1회용, 장신구 등급 이하의 몬스터 대상) ──
+  // 진화의 돌 계열: 얻으면 보드·벤치의 Lv1 유닛 하나를 무작위로 Lv2로 (성장 선택). 대상이 없으면 생길 때까지 보관
+  ...([
+    ['evo_pebble', '진화의 조약돌', 1],
+    ['evo_stone', '진화의 돌', 2],
+    ['evo_crystal', '진화의 결정', 3],
+    ['evo_gem', '진화의 보석', 4],
+  ] as const).map(([id, name, grade]): TrinketDef => ({
+    id, name, grade, triggers: [], passive: { upgradeOnBoard: true },
+    desc: `1회용: 보드·벤치의 ${GRADE_NAMES[grade]} 이하 Lv1 유닛 하나를 무작위로 Lv2로 (성장 선택). 대상이 없으면 생길 때까지 보관`,
+  })),
+  // 각성의 두루마리 계열: 다음에 사는 몬스터가 Lv2로 들어온다 (성장 선택)
+  ...([
+    ['awk_note', '각성의 쪽지', 1],
+    ['awk_scroll', '각성의 두루마리', 2],
+    ['awk_tome', '각성의 서', 3],
+    ['awk_canon', '각성의 경전', 4],
+  ] as const).map(([id, name, grade]): TrinketDef => ({
+    id, name, grade, triggers: [], passive: { upgradeNextBuy: true },
+    desc: `1회용: 다음에 구매하는 ${GRADE_NAMES[grade]} 이하 몬스터가 Lv2로 들어옴 (성장 선택)`,
+  })),
+
+  // 변이: 푸시 유어 럭. 드물게 나오고, 신화 몬스터가 걸리면 기원 몬스터가 될 수도 있다
+  {
+    id: 'chaos_die', name: '혼돈의 주사위', grade: 4, triggers: [], passive: { transmute: true },
+    desc: '1회용: 보드의 몬스터 하나를 무작위로 골라 한 단계 높은 등급의 무작위 몬스터로 바꿈. 레벨·고른 성장·영구 강화는 그대로',
+  },
+  {
+    id: 'golden_baton', name: '황금 지휘봉', grade: 7, shop: false, triggers: [], passive: { transmuteAll: true, transmuteExcept: ['conductor'] },
+    desc: '1회용: 지휘자를 제외한 보드의 모든 몬스터를 한 단계 높은 등급의 무작위 몬스터로 바꿈 (레벨·성장·영구 강화 유지). 지휘자의 완벽한 공연 보상',
+  },
+  {
+    id: 'chaos_coin', name: '혼돈의 동전', grade: 3, triggers: [], passive: { transmute: true, transmuteMaxGrade: 2 },
+    desc: '1회용: 보드의 일반·고급 몬스터 하나를 무작위로 골라 한 단계 높은 등급의 무작위 몬스터로 바꿈. 레벨·고른 성장·영구 강화는 그대로',
+  },
+
   // ── 기원 (12일차 보스 보상 전용) ──
   {
     id: 'origin_heart', name: '기원의 심장', grade: 6, desc: '전투 시작: 아군 공격력 +100%, 최대 체력 +50%',
@@ -99,3 +151,9 @@ export const TRINKETS: TrinketDef[] = [
 ];
 
 export const TRINKET_MAP: Record<string, TrinketDef> = Object.fromEntries(TRINKETS.map((t) => [t.id, t]));
+
+// 장신구 분류: 일회성(효과를 한 번 쓰면 사라짐) / 지속(가지고 있는 동안 계속). 효과에서 자동으로 정해진다
+export function isOneShot(t: TrinketDef | undefined): boolean {
+  const p = t?.passive;
+  return !!(p?.upgradeOnBoard || p?.upgradeNextBuy || p?.transmute || p?.transmuteAll);
+}

@@ -10,7 +10,9 @@
     "web": "vite",
     "web:build": "vite build",
     "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "agent": "node --disable-warning=ExperimentalWarning src/agent/cli.ts",
+    "agent:mcp": "node --disable-warning=ExperimentalWarning src/agent/mcp.ts"
   },
   "engines": {
     "node": ">=22.18"

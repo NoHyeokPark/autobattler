@@ -3,14 +3,14 @@
 
 import { BALANCE } from '../config/balance.ts';
 import { hashSeed, Rng } from '../core/rng.ts';
-import { LEADERS } from '../data/leaders.ts';
+import { leaderPath, LEADERS } from '../data/leaders.ts';
 import type { EnvId } from '../data/types.ts';
-import { botGrowth, botNode, botRewardChoice, botShop, STRATEGIES } from '../game/bot.ts';
+import { botGrowth, botMonsterChoice, botNode, botRewardChoice, botStageChoice, botShop, botUnitGrowth, STRATEGIES } from '../game/bot.ts';
 import type { Strategy } from '../game/bot.ts';
 import { playBattle } from '../game/day.ts';
 import type { RecordStore } from '../game/matching.ts';
 import { beginDay, chooseExtend, chooseReward, stopExtension } from '../game/run.ts';
-import { createRun, deployLimit } from '../game/state.ts';
+import { baseDeployLimit, createRun } from '../game/state.ts';
 
 export interface WinCount {
   n: number;
@@ -28,6 +28,8 @@ export interface LeagueStats {
   sideByEnv: Record<EnvId, { n: number; playerWins: number }>;
   emptySlots: number[];
   limit6Boards: number;
+  // 리더·변신(본질 강화 포함)별 성적. 키 = "리더 · 변신 이름" (변신 전 탈락은 "변신 전 종료")
+  transforms: Map<string, { runs: number; wins: number; champs: number }>;
 }
 
 function inc(m: Map<string, WinCount>, k: string, win: boolean) {
@@ -47,6 +49,7 @@ export function runLeague(store: RecordStore, runs: number, seed: number): Leagu
     sideByEnv: { normal: { n: 0, playerWins: 0 }, hp: { n: 0, playerWins: 0 }, atk: { n: 0, playerWins: 0 } },
     emptySlots: Array(9).fill(0),
     limit6Boards: 0,
+    transforms: new Map(),
   };
   for (let r = 0; r < runs; r++) {
     const strategy = STRATEGIES[r % STRATEGIES.length];
@@ -56,6 +59,7 @@ export function runLeague(store: RecordStore, runs: number, seed: number): Leagu
     beginDay(s);
     for (let guard = 0; guard < 200 && s.phase !== 'ended'; guard++) {
       if (s.phase === 'growth') botGrowth(s, rng, strategy);
+      else if (s.phase === 'unitGrowth') botUnitGrowth(s, rng, strategy);
       else if (s.phase === 'shop') {
         if (s.extension.active && s.extension.wins >= 2 && rng.chancePct(50)) {
           stopExtension(s);
@@ -67,7 +71,7 @@ export function runLeague(store: RecordStore, runs: number, seed: number): Leagu
           stats.strategies[strategy].lateGoldLeft += s.gold;
         }
         s.nodeIndex = botNode(s, rng);
-        if (deployLimit(s) === BALANCE.board.initialDeployLimit) {
+        if (baseDeployLimit(s) === BALANCE.board.initialDeployLimit) {
           stats.limit6Boards++;
           s.board.forEach((u, i) => { if (!u) stats.emptySlots[i]++; });
         }
@@ -89,7 +93,8 @@ export function runLeague(store: RecordStore, runs: number, seed: number): Leagu
           if (b.win) stats.sideByEnv[node.env].playerWins++;
         }
       } else if (s.phase === 'reward') {
-        chooseReward(s, botRewardChoice(s.rewards[0].options, strategy));
+        const st = s.rewards[0];
+        chooseReward(s, st.kind === 'event' || st.kind === 'campfire' ? botStageChoice(s, st) : st.kind === 'monster' ? botMonsterChoice(s, st.options) : botRewardChoice(st.options, strategy));
       } else if (s.phase === 'extendChoice') {
         chooseExtend(s, rng.chancePct(50));
       }
@@ -101,6 +106,12 @@ export function runLeague(store: RecordStore, runs: number, seed: number): Leagu
     if (s.wins >= BALANCE.run.winTarget) st.champs++;
     st.stack += Math.max(0, ...s.board.map((u) => u?.bonus?.atk ?? 0));
     if (s.losses >= BALANCE.run.lossLimit && s.day <= 7) st.earlyOut++;
+    const tfKey = `${leader.name} · ${leaderPath(leader.id, s.growth)?.name ?? '변신 전 종료'}`;
+    const tf = stats.transforms.get(tfKey) ?? { runs: 0, wins: 0, champs: 0 };
+    tf.runs++;
+    tf.wins += s.wins;
+    if (s.wins >= BALANCE.run.winTarget) tf.champs++;
+    stats.transforms.set(tfKey, tf);
   }
   return stats;
 }

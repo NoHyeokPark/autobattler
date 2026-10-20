@@ -1,36 +1,37 @@
-// 모드 관리: 이름, 태그 목록, 내보내기/가져오기, 기본값으로 초기화.
+// 모드 관리: 이름별 모드 목록, 이름, 새 기본 항목 가져오기, 태그 목록, 내보내기/가져오기, 기본값으로 초기화.
 
 import { useState } from 'react';
-import { DEFAULT_MOD, parseMod } from '../../src/data/registry.ts';
+import { DEFAULT_KINDS, DEFAULT_MOD, defaultKey, importDefaults, missingDefaults, parseMod } from '../../src/data/registry.ts';
 import type { ModData } from '../../src/data/registry.ts';
 import { Field, TextInput } from './fields.tsx';
+import { downloadMod, ModLibrary } from './ModLibrary.tsx';
+import type { LibraryActions } from './ModLibrary.tsx';
 
-export function ModPanel({ draft, onChange, onReplace }: { draft: ModData; onChange: () => void; onReplace: (mod: ModData, note: string) => void }) {
+export function ModPanel({ draft, dirty, onChange, onReplace, onApplyMod, onSaveDraft }: LibraryActions & { onChange: () => void }) {
   const [newTag, setNewTag] = useState('');
   const [importErr, setImportErr] = useState('');
   const used = (t: string) =>
     JSON.stringify([draft.monsters, draft.leaders, draft.trinkets, draft.unitGrowth]).includes(`"${t}"`);
 
-  const exportMod = () => {
-    const blob = new Blob([JSON.stringify(draft, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${draft.name.replace(/[\\/:*?"<>|\s]+/g, '_') || 'mod'}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
+  const exportMod = () => downloadMod(draft);
 
   return (
     <div className="mod-panel">
+      <ModLibrary draft={draft} dirty={dirty} onReplace={onReplace} onApplyMod={onApplyMod} onSaveDraft={onSaveDraft} />
+
       <section className="panel">
-        <h3>모드 정보</h3>
+        <h3>편집 중인 모드 정보</h3>
         <div className="form-grid">
-          <Field label="모드 이름"><TextInput value={draft.name} onChange={(v) => { draft.name = v; onChange(); }} /></Field>
+          <Field label="모드 이름" hint="이름을 바꿔 적용·저장하면 새 이름으로 따로 보관됩니다 (원래 이름의 모드는 그대로 남음)">
+            <TextInput value={draft.name} onChange={(v) => { draft.name = v; onChange(); }} />
+          </Field>
         </div>
         <p className="muted">
           몬스터 {draft.monsters.length} · 리더 {draft.leaders.length} · 장신구 {draft.trinkets.length} · 공용 성장 {draft.unitGrowth.length} · 태그 {draft.tags.length}
         </p>
       </section>
+
+      <NewDefaults draft={draft} onChange={onChange} />
 
       <section className="panel">
         <h3>태그</h3>
@@ -94,5 +95,71 @@ export function ModPanel({ draft, onChange, onReplace }: { draft: ModData; onCha
         {importErr && <p className="bad-text">{importErr}</p>}
       </section>
     </div>
+  );
+}
+
+// 기본 데이터에는 있는데 이 모드에는 없는 항목. 모드를 저장한 뒤 코드에 추가된 콘텐츠가 여기 나온다.
+// (일부러 지운 기본 항목도 여기 다시 보이므로, 체크를 풀고 넣으면 된다)
+function NewDefaults({ draft, onChange }: { draft: ModData; onChange: () => void }) {
+  const missing = missingDefaults(draft);
+  const key = defaultKey;
+  const [off, setOff] = useState<Set<string>>(new Set());
+  const [msg, setMsg] = useState('');
+  const picked = missing.filter((m) => !off.has(key(m)));
+  const toggle = (k: string) => setOff((s) => {
+    const n = new Set(s);
+    if (n.has(k)) n.delete(k);
+    else n.add(k);
+    return n;
+  });
+
+  const run = () => {
+    const tags = importDefaults(draft, picked);
+    setMsg(`${picked.length}개 항목을 초안에 넣었습니다${tags.length ? ` (태그 추가: ${tags.join(', ')})` : ''}. 위의 "변경 사항 적용"을 눌러야 게임과 파일에 반영됩니다.`);
+    setOff(new Set());
+    onChange();
+  };
+
+  return (
+    <section className="panel">
+      <h3>새 기본 항목 가져오기</h3>
+      <p className="muted">
+        모드는 저장한 순간의 데이터 전체라서, 그 뒤 게임에 추가된 몬스터·장신구 등은 이 모드를 쓰는 동안 나오지 않습니다.
+        기본 데이터에는 있는데 이 모드에 없는 항목을 골라 넣을 수 있습니다. 이미 있는 항목(직접 고친 것 포함)은 건드리지 않습니다.
+      </p>
+      {missing.length === 0 ? (
+        <p className="ok-text">{msg || '빠진 기본 항목이 없습니다.'}{draft.ignoredDefaults?.length ? <> <button className="btn tiny ghost" onClick={() => { delete draft.ignoredDefaults; onChange(); }}>숨긴 {draft.ignoredDefaults.length}개 다시 보기</button></> : null}</p>
+      ) : (
+        <>
+          {DEFAULT_KINDS.map(([kind, label]) => {
+            const items = missing.filter((m) => m.kind === kind);
+            if (items.length === 0) return null;
+            return (
+              <div key={kind} className="new-defaults">
+                <h4>{label} {items.length}</h4>
+                <div className="inline wrap">
+                  {items.map((m) => (
+                    <label key={key(m)} className={`pick-chip ${off.has(key(m)) ? '' : 'on'}`}>
+                      <input type="checkbox" checked={!off.has(key(m))} onChange={() => toggle(key(m))} />
+                      {m.parentName && <span className="muted">{m.parentName} › </span>}{m.name} <span className="muted">({m.id})</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          <div className="inline">
+            <button className="btn primary" disabled={picked.length === 0} onClick={run}>선택한 {picked.length}개 가져오기</button>
+            <button className="btn small ghost" onClick={() => setOff(new Set())}>모두 선택</button>
+            <button className="btn small ghost" onClick={() => setOff(new Set(missing.map(key)))}>모두 해제</button>
+            <button
+              className="btn small" disabled={off.size === 0} title="이 모드에 일부러 넣지 않을 기본 항목. 숨긴 항목은 다시 보이지 않습니다 (적용해야 저장)"
+              onClick={() => { draft.ignoredDefaults = [...new Set([...(draft.ignoredDefaults ?? []), ...off])]; setOff(new Set()); setMsg(`${off.size}개 항목을 이 모드에서 숨겼습니다.`); onChange(); }}
+            >체크 해제한 {off.size}개 숨기기</button>
+          </div>
+          {msg && <p className="ok-text">{msg}</p>}
+        </>
+      )}
+    </section>
   );
 }

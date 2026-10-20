@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "autobattler": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["--disable-warning=ExperimentalWarning", "src/agent/mcp.ts"]
+    }
+  }
+}

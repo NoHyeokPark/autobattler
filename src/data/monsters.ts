@@ -105,15 +105,15 @@ export const MONSTERS: MonsterDef[] = [
   {
     id: 'wolf', name: '늑대', grade: 2, tags: ['야수'], hp: 42, atk: 6, intervalTicks: 15,
     triggers: [
-      { on: 'battleStart', effects: [{ type: 'intervalPct', target: T.adjacent('야수'), pct: [-10, -15, -25] }] },
+      { on: 'battleStart', effects: [{ type: 'haste', target: T.adjacent('야수'), amount: [11, 18, 33] }] },
       { on: 'act', effects: [{ type: 'damage', atkPct: 100 }] },
     ],
     desc: '',
     growth: [
       {
-        id: 'wolf_alpha', name: '우두머리', desc: '인접 가속 능력을 잃고, 주변 8칸 야수 행동 간격 -12/18/25%', repeatable: false,
+        id: 'wolf_alpha', name: '우두머리', desc: '인접 가속 능력을 잃고, 주변 8칸 야수 가속 +14/22/33', repeatable: false,
         removeTriggers: [0],
-        triggers: [{ on: 'battleStart', effects: [{ type: 'intervalPct', target: T.around('야수'), pct: [-12, -18, -25] }] }],
+        triggers: [{ on: 'battleStart', effects: [{ type: 'haste', target: T.around('야수'), amount: [14, 22, 33] }] }],
       },
     ],
   },
@@ -239,10 +239,10 @@ export const MONSTERS: MonsterDef[] = [
     triggers: [{
       on: 'act', effects: [
         { type: 'damage', atkPct: 100 },
-        { type: 'intervalPct', target: T.self(), pct: [-3, -4, -6] },
+        { type: 'haste', target: T.self(), amount: [3, 4, 6] },
       ],
     }],
-    desc: '행동: 100% 피해, 자신의 행동 간격 영구 -3/4/6%.',
+    desc: '행동: 100% 피해, 자신 가속 +3/4/6 (전투 중 누적).',
   },
 
   // ── 전설 (4원) ──
@@ -343,6 +343,25 @@ export const MONSTERS: MonsterDef[] = [
       { on: 'act', effects: [{ type: 'damage', atkPct: 100 }] },
     ],
     desc: '',
+  },
+  // 거울 정령: 같은 칸의 상대가 행동할 때마다 그 행동을 내 능력치로 따라 한다 (추가발동도 하나하나). 상대 배치가 곧 내 능력
+  {
+    id: 'mirror_spirit', name: '거울 정령', grade: 7, shop: false, tags: [], hp: 260, atk: 24, power: 24, intervalTicks: 40,
+    triggers: [{ on: 'react', watch: { side: 'enemy', area: 'near', dirs: ['c'] }, effects: [{ type: 'mimic' }] }],
+    desc: '',
+    lines: { detail: '네가 무엇을 하든, 나도 똑같이.' },
+  },
+  // 지휘자: 상점에 나오는 기원. 전투 시작에 주변 8칸에서 "자기 주변에 같은 태그가 없는" 유닛을 행동시키고,
+  // 그 수만큼 보상 (골드, 3명마다 고급 장신구, 8명이면 황금 지휘봉). 태그를 엇갈려 놓는 배치 퍼즐 덱
+  {
+    id: 'conductor', name: '지휘자', grade: 7, tags: [], hp: 220, atk: 10, intervalTicks: 40,
+    deploy: 1, // 보드에 있으면 배치 인원 +1: 자기 자리를 스스로 채워 8명 연주를 노리기 쉽게
+    triggers: [{
+      on: 'battleStart', say: '자, 모두의 소리를 들려줘.',
+      effects: [{ type: 'conduct', target: { side: 'ally', area: 'near', dirs: ['u', 'd', 'l', 'r', 'ul', 'ur', 'dl', 'dr'] }, uniqueTag: true, goldPer: 1, trinketGrade: 2, trinketPer: 3, perfect: 8, perfectTrinket: 'golden_baton' }],
+    }],
+    desc: '',
+    lines: { buy: '공연을 시작하지.', detail: '같은 소리는 둘이 필요 없어. 각자의 소리를 내.' },
   },
 ];
 
